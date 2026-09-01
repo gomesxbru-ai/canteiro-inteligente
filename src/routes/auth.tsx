@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { HardHat } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,13 +36,25 @@ function AuthPage() {
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [recovering, setRecovering] = useState(false);
 
   useEffect(() => {
+    const isRecoveryRedirect = window.location.href.includes("type=recovery");
+    if (isRecoveryRedirect) setRecovering(true);
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) navigate({ to: "/dashboard", replace: true });
+      if (data.session && !isRecoveryRedirect) navigate({ to: "/dashboard", replace: true });
     });
     const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session && (event === "SIGNED_IN" || event === "INITIAL_SESSION")) {
+      if (event === "PASSWORD_RECOVERY") {
+        setRecovering(true);
+        return;
+      }
+      if (
+        session &&
+        !isRecoveryRedirect &&
+        (event === "SIGNED_IN" || event === "INITIAL_SESSION")
+      ) {
         navigate({ to: "/dashboard", replace: true });
       }
     });
@@ -52,11 +63,23 @@ function AuthPage() {
 
   async function signIn(e: React.FormEvent) {
     e.preventDefault();
+    setFormError(null);
     setLoading(true);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
+      password,
+    });
     setLoading(false);
     if (error) {
-      toast.error(error.message);
+      const message = authErrorMessage(error);
+      setFormError(message);
+      toast.error(message);
+      return;
+    }
+    if (!data.session) {
+      const message = "Não foi possível iniciar sua sessão. Tente novamente.";
+      setFormError(message);
+      toast.error(message);
       return;
     }
     navigate({ to: "/dashboard", replace: true });
@@ -64,9 +87,10 @@ function AuthPage() {
 
   async function signUp(e: React.FormEvent) {
     e.preventDefault();
+    setFormError(null);
     setLoading(true);
     const { data, error } = await supabase.auth.signUp({
-      email,
+      email: email.trim().toLowerCase(),
       password,
       options: {
         emailRedirectTo: window.location.origin,
@@ -75,7 +99,9 @@ function AuthPage() {
     });
     setLoading(false);
     if (error) {
-      toast.error(error.message);
+      const message = authErrorMessage(error);
+      setFormError(message);
+      toast.error(message);
       return;
     }
     if (!data.session) {
@@ -85,13 +111,59 @@ function AuthPage() {
   }
 
   async function google() {
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: window.location.origin,
+    setFormError(null);
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/dashboard`,
+      },
     });
-    if (result.error) {
-      toast.error("Não foi possível entrar com o Google.");
+    setLoading(false);
+    if (error) {
+      const message = authErrorMessage(error);
+      setFormError(message);
+      toast.error(message);
       return;
     }
+  }
+
+  async function resetPassword() {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      setFormError("Informe seu e-mail para redefinir a senha.");
+      return;
+    }
+
+    setFormError(null);
+    setLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+      redirectTo: `${window.location.origin}/auth`,
+    });
+    setLoading(false);
+    if (error) {
+      const message = authErrorMessage(error);
+      setFormError(message);
+      toast.error(message);
+      return;
+    }
+    toast.success("Enviamos as instruções de recuperação para seu e-mail.");
+  }
+
+  async function updatePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setFormError(null);
+    setLoading(true);
+    const { error } = await supabase.auth.updateUser({ password });
+    setLoading(false);
+    if (error) {
+      const message = authErrorMessage(error);
+      setFormError(message);
+      toast.error(message);
+      return;
+    }
+    toast.success("Senha atualizada com sucesso.");
+    navigate({ to: "/dashboard", replace: true });
   }
 
   return (
@@ -110,7 +182,9 @@ function AuthPage() {
             controle de equipe — com dados isolados por empresa.
           </p>
         </div>
-        <p className="text-xs opacity-60">Feito para construtoras, empreiteiras e prestadores de serviço.</p>
+        <p className="text-xs opacity-60">
+          Feito para construtoras, empreiteiras e prestadores de serviço.
+        </p>
       </div>
 
       <div className="flex items-center justify-center px-5 py-12">
@@ -122,76 +196,171 @@ function AuthPage() {
 
           {pendingConfirm ? (
             <div className="panel mt-6 p-4 text-sm">
-              Enviamos um link de confirmação para <strong>{email}</strong>. Confirme o e-mail e volte
-              aqui para entrar.
+              Enviamos um link de confirmação para <strong>{email}</strong>. Confirme o e-mail e
+              volte aqui para entrar.
             </div>
           ) : null}
 
-          <Tabs defaultValue="signin" className="mt-6">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="signin">Entrar</TabsTrigger>
-              <TabsTrigger value="signup">Criar conta</TabsTrigger>
-            </TabsList>
+          {formError ? (
+            <div
+              role="alert"
+              className="mt-6 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+            >
+              {formError}
+            </div>
+          ) : null}
 
-            <TabsContent value="signin">
-              <form onSubmit={signIn} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="email">E-mail</Label>
-                  <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="password">Senha</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                  />
-                </div>
-                <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? "Entrando..." : "Entrar"}
-                </Button>
-              </form>
-            </TabsContent>
+          {recovering ? (
+            <form onSubmit={updatePassword} className="mt-6 space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="recovery-password">Crie uma nova senha</Label>
+                <Input
+                  id="recovery-password"
+                  type="password"
+                  name="recovery-password"
+                  autoComplete="new-password"
+                  required
+                  minLength={6}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+              <Button type="submit" className="w-full" disabled={loading}>
+                {loading ? "Atualizando..." : "Atualizar senha"}
+              </Button>
+            </form>
+          ) : (
+            <Tabs defaultValue="signin" className="mt-6">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="signin">Entrar</TabsTrigger>
+                <TabsTrigger value="signup">Criar conta</TabsTrigger>
+              </TabsList>
 
-            <TabsContent value="signup">
-              <form onSubmit={signUp} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">Nome completo</Label>
-                  <Input id="name" required value={name} onChange={(e) => setName(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email2">E-mail</Label>
-                  <Input id="email2" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="password2">Senha</Label>
-                  <Input
-                    id="password2"
-                    type="password"
-                    required
-                    minLength={6}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                  />
-                </div>
-                <Button type="submit" className="w-full" disabled={loading}>
-                  {loading ? "Criando..." : "Criar conta"}
-                </Button>
-              </form>
-            </TabsContent>
-          </Tabs>
+              <TabsContent value="signin">
+                <form onSubmit={signIn} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="email">E-mail</Label>
+                    <Input
+                      id="email"
+                      name="email"
+                      type="email"
+                      autoComplete="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="password">Senha</Label>
+                    <Input
+                      id="password"
+                      type="password"
+                      name="password"
+                      autoComplete="current-password"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                  </div>
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading ? "Entrando..." : "Entrar"}
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={resetPassword}
+                    disabled={loading}
+                    className="w-full text-center text-xs text-muted-foreground hover:text-foreground hover:underline disabled:opacity-50"
+                  >
+                    Esqueci minha senha
+                  </button>
+                </form>
+              </TabsContent>
 
-          <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground">
-            <span className="h-px flex-1 bg-border" /> ou <span className="h-px flex-1 bg-border" />
-          </div>
+              <TabsContent value="signup">
+                <form onSubmit={signUp} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Nome completo</Label>
+                    <Input
+                      id="name"
+                      required
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="email2">E-mail</Label>
+                    <Input
+                      id="email2"
+                      name="signup-email"
+                      type="email"
+                      autoComplete="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="password2">Senha</Label>
+                    <Input
+                      id="password2"
+                      type="password"
+                      required
+                      minLength={6}
+                      name="new-password"
+                      autoComplete="new-password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                  </div>
+                  <Button type="submit" className="w-full" disabled={loading}>
+                    {loading ? "Criando..." : "Criar conta"}
+                  </Button>
+                </form>
+              </TabsContent>
+            </Tabs>
+          )}
 
-          <Button variant="outline" className="w-full" onClick={google}>
-            Continuar com Google
-          </Button>
+          {!recovering ? (
+            <>
+              <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground">
+                <span className="h-px flex-1 bg-border" /> ou{" "}
+                <span className="h-px flex-1 bg-border" />
+              </div>
+
+              <Button variant="outline" className="w-full" onClick={google} disabled={loading}>
+                Continuar com Google
+              </Button>
+            </>
+          ) : null}
         </div>
       </div>
     </div>
   );
+}
+
+function authErrorMessage(error: { message: string; code?: string; status?: number }) {
+  const value = `${error.code ?? ""} ${error.message}`.toLowerCase();
+
+  if (value.includes("invalid login credentials") || value.includes("invalid_credentials")) {
+    return "E-mail ou senha incorretos. Confira os dados e tente novamente.";
+  }
+  if (value.includes("email not confirmed") || value.includes("email_not_confirmed")) {
+    return "Seu e-mail ainda não foi confirmado. Abra o link enviado para sua caixa de entrada.";
+  }
+  if (value.includes("user already registered") || value.includes("user_already_exists")) {
+    return "Este e-mail já possui uma conta. Entre com sua senha ou use a recuperação de acesso.";
+  }
+  if (value.includes("weak password") || value.includes("password should be")) {
+    return "Crie uma senha mais forte, com pelo menos 6 caracteres.";
+  }
+  if (value.includes("rate limit") || error.status === 429) {
+    return "Muitas tentativas em sequência. Aguarde alguns minutos e tente novamente.";
+  }
+  if (value.includes("provider is not enabled") || value.includes("unsupported provider")) {
+    return "O login com Google ainda não está habilitado. Use seu e-mail e senha.";
+  }
+  if (error.status === 422) {
+    return "Os dados de acesso não foram aceitos. Confira o e-mail e a senha ou recupere seu acesso.";
+  }
+  return "Não foi possível acessar sua conta agora. Tente novamente em instantes.";
 }
