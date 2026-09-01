@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { HardHat } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable/index";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,7 +33,6 @@ function AuthPage() {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState(false);
@@ -90,46 +88,40 @@ function AuthPage() {
   async function signUp(e: React.FormEvent) {
     e.preventDefault();
     setFormError(null);
-    const validationError = validateSignUp(email, password, passwordConfirmation);
-    if (validationError) {
-      setFormError(validationError);
-      return;
-    }
     setLoading(true);
-    try {
-      const { data, error } = await supabase.auth.signUp({
-        email: email.trim().toLowerCase(),
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth`,
-          data: { full_name: name.trim() },
-        },
-      });
-      if (error) throw error;
-      if (data.session) {
-        navigate({ to: "/onboarding", replace: true });
-        return;
-      }
-      setPendingConfirm(true);
-      toast.success("Conta criada! Confirme seu e-mail para acessar.");
-    } catch (error) {
-      const message = authErrorMessage(toAuthError(error));
+    const { data, error } = await supabase.auth.signUp({
+      email: email.trim().toLowerCase(),
+      password,
+      options: {
+        emailRedirectTo: window.location.origin,
+        data: { full_name: name },
+      },
+    });
+    setLoading(false);
+    if (error) {
+      const message = authErrorMessage(error);
       setFormError(message);
       toast.error(message);
-    } finally {
-      setLoading(false);
+      return;
+    }
+    if (!data.session) {
+      setPendingConfirm(true);
+      toast.success("Conta criada! Confirme seu e-mail para acessar.");
     }
   }
 
   async function google() {
     setFormError(null);
     setLoading(true);
-    const result = await lovable.auth.signInWithOAuth("google", {
-      redirect_uri: `${window.location.origin}/dashboard`,
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/dashboard`,
+      },
     });
     setLoading(false);
-    if (result.error) {
-      const message = authErrorMessage(toAuthError(result.error));
+    if (error) {
+      const message = authErrorMessage(error);
       setFormError(message);
       toast.error(message);
       return;
@@ -228,7 +220,7 @@ function AuthPage() {
                   name="recovery-password"
                   autoComplete="new-password"
                   required
-                  minLength={8}
+                  minLength={6}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
@@ -313,27 +305,11 @@ function AuthPage() {
                       id="password2"
                       type="password"
                       required
-                      minLength={8}
+                      minLength={6}
                       name="new-password"
                       autoComplete="new-password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Use pelo menos 8 caracteres, com letra maiúscula, minúscula e número.
-                  </p>
-                  <div className="space-y-2">
-                    <Label htmlFor="password-confirmation">Confirme a senha</Label>
-                    <Input
-                      id="password-confirmation"
-                      type="password"
-                      required
-                      minLength={8}
-                      name="password-confirmation"
-                      autoComplete="new-password"
-                      value={passwordConfirmation}
-                      onChange={(e) => setPasswordConfirmation(e.target.value)}
                     />
                   </div>
                   <Button type="submit" className="w-full" disabled={loading}>
@@ -381,7 +357,7 @@ function authErrorMessage(error: AuthErrorLike) {
     return "Este e-mail já possui uma conta. Entre com sua senha ou use a recuperação de acesso.";
   }
   if (value.includes("weak password") || value.includes("password should be")) {
-    return "A senha não atende aos requisitos de segurança. Use 8 caracteres com maiúscula, minúscula e número.";
+    return "Crie uma senha mais forte, com pelo menos 6 caracteres.";
   }
   if (value.includes("rate limit") || error.status === 429) {
     return "Muitas tentativas em sequência. Aguarde alguns minutos e tente novamente.";
@@ -398,26 +374,4 @@ function authErrorMessage(error: AuthErrorLike) {
   return error.message && error.message !== "missing_session"
     ? `Não foi possível acessar: ${error.message}`
     : "Não foi possível iniciar sua sessão. Tente novamente.";
-}
-
-function validateSignUp(email: string, password: string, confirmation: string) {
-  if (!/^\S+@\S+\.\S+$/.test(email.trim())) return "Informe um e-mail válido.";
-  if (password.length < 8) return "A senha deve ter pelo menos 8 caracteres.";
-  if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)) {
-    return "A senha precisa conter letra maiúscula, letra minúscula e número.";
-  }
-  if (password !== confirmation) return "As senhas informadas não são iguais.";
-  return null;
-}
-
-function toAuthError(error: unknown): AuthErrorLike {
-  if (error && typeof error === "object") {
-    const value = error as { message?: unknown; code?: unknown; status?: unknown };
-    return {
-      message: typeof value.message === "string" ? value.message : "Erro de autenticação",
-      code: typeof value.code === "string" ? value.code : undefined,
-      status: typeof value.status === "number" ? value.status : undefined,
-    };
-  }
-  return { message: typeof error === "string" ? error : "Erro de autenticação" };
 }
