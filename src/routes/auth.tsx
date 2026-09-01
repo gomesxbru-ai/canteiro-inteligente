@@ -67,21 +67,24 @@ function AuthPage() {
     e.preventDefault();
     setFormError(null);
     setLoading(true);
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim().toLowerCase(),
-        password,
-      });
-      if (error) throw error;
-      if (!data.session) throw new Error("missing_session");
-      navigate({ to: "/dashboard", replace: true });
-    } catch (error) {
-      const message = authErrorMessage(toAuthError(error));
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
+      password,
+    });
+    setLoading(false);
+    if (error) {
+      const message = authErrorMessage(error);
       setFormError(message);
       toast.error(message);
-    } finally {
-      setLoading(false);
+      return;
     }
+    if (!data.session) {
+      const message = "Não foi possível iniciar sua sessão. Tente novamente.";
+      setFormError(message);
+      toast.error(message);
+      return;
+    }
+    navigate({ to: "/dashboard", replace: true });
   }
 
   async function signUp(e: React.FormEvent) {
