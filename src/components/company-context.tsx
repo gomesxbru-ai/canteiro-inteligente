@@ -9,7 +9,13 @@ export type Membership = {
   id: string;
   role: CompanyRole;
   company_id: string;
-  companies: { id: string; name: string; cnpj: string | null; city: string | null } | null;
+  companies: {
+    id: string;
+    name: string;
+    cnpj: string | null;
+    city: string | null;
+    phone: string | null;
+  } | null;
 };
 
 type CompanyContextValue = {
@@ -42,7 +48,7 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("memberships")
-        .select("id, role, company_id, companies(id, name, cnpj, city)")
+        .select("id, role, company_id, companies(id, name, cnpj, city, phone)")
         .eq("user_id", userQuery.data!.id);
       if (error) throw error;
       return (data ?? []) as Membership[];
